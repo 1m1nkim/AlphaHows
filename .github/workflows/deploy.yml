@@ -62,3 +62,33 @@ jobs:
               -e RDS_USERNAME='${{ secrets.RDS_USERNAME }}' \
               -e RDS_PASSWORD='${{ secrets.RDS_PASSWORD }}' \
               ${{ secrets.DOCKER_USERNAME }}/alphahows:v1
+
+      - name: Notify Telegram (Success)
+        if: success()
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          message: |
+            ✅ AlphaHows 배포 성공! 🚀
+            
+            - Commit: ${{ github.sha }}
+            - Actor: ${{ github.actor }}
+            - Status: Success
+            
+            지금 접속 확인하기: http://${{ secrets.EC2_HOST }}:8080
+
+      - name: Notify Telegram (Failure)
+        if: failure()
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          message: |
+            ❌ AlphaHows 배포 실패.. 😭
+            
+            - Commit: ${{ github.sha }}
+            - Actor: ${{ github.actor }}
+            - Status: Fail
+            
+            로그를 확인해주세요.
