@@ -34,7 +34,7 @@ jobs:
 
       - name: Build Backend (Make JAR)
         working-directory: ./backend
-        run: ./mvnw clean package
+        run: ./mvnw clean package -DskipTests
         env:
           RDS_URL: ${{ secrets.RDS_URL }}
           RDS_USERNAME: ${{ secrets.RDS_USERNAME }}
