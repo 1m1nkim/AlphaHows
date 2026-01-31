@@ -1,0 +1,13 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "frontend-build",
+            "type": "npm",
+            "script": "build",
+            "path": "frontend",
+            "problemMatcher": [],
+            "detail": "Build the frontend assets before starting Spring Boot"
+        }
+    ]
+}

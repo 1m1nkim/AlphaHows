@@ -15,7 +15,8 @@
             "name": "AlphaHowsApplication",
             "request": "launch",
             "mainClass": "com.hows.alphahows.AlphaHowsApplication",
-            "projectName": "AlphaHows"
+            "projectName": "AlphaHows",
+            "preLaunchTask": "frontend-build"
         }
     ]
 }
