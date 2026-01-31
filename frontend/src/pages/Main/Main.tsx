@@ -1,15 +1,19 @@
+import { useState } from 'react';
 import './Main.css';
+import LoginModal from '../../components/LoginModal';
 
 const Main = () => {
+    const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
     return (
         <div className="main-container">
+            <LoginModal isOpen={isLoginModalOpen} onClose={() => setIsLoginModalOpen(false)} />
             <header className="main-header">
                 <div className="logo">AlphaHows</div>
                 <nav>
                     <button className="nav-btn">Home</button>
                     <button className="nav-btn">About</button>
-                    <button className="nav-btn primary">Login</button>
+                    <button className="nav-btn primary" onClick={() => setIsLoginModalOpen(true)}>Login</button>
                 </nav>
             </header>
 
