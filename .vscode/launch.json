@@ -16,7 +16,8 @@
             "request": "launch",
             "mainClass": "com.hows.alphahows.AlphaHowsApplication",
             "projectName": "AlphaHows",
-            "preLaunchTask": "frontend-build"
+            "preLaunchTask": "frontend-build",
+            "envFile": "${workspaceFolder}/.env"
         }
     ]
 }
