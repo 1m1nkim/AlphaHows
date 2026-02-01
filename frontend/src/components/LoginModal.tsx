@@ -64,6 +64,11 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
                     </div>
                     {error && <p className="error-msg">{error}</p>}
                     <button type="submit" className="login-submit-btn">Sign In</button>
+
+                    <div className="divider">OR</div>
+                    <a href="http://localhost:8080/oauth2/authorization/kakao" className="kakao-login-btn">
+                        카카오로 로그인
+                    </a>
                 </form>
             </div>
         </div>

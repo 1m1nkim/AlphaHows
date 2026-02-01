@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 
 /**
@@ -13,6 +14,8 @@ import lombok.Builder;
  */
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
+@AllArgsConstructor
+@Builder
 @Entity
 @Table(name = "users")
 public class User extends BaseTimeEntity {
@@ -40,11 +43,4 @@ public class User extends BaseTimeEntity {
     @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private UserStreak userStreak;
 
-    @Builder
-    public User(String email, String nickname, String provider, String role) {
-        this.email = email;
-        this.nickname = nickname;
-        this.provider = provider;
-        this.role = role;
-    }
 }
