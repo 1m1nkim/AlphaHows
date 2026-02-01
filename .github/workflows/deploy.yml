@@ -66,6 +66,8 @@ jobs:
               -e RDS_URL='${{ secrets.RDS_URL }}' \
               -e RDS_USERNAME='${{ secrets.RDS_USERNAME }}' \
               -e RDS_PASSWORD='${{ secrets.RDS_PASSWORD }}' \
+              -e KAKAO_CLIENT_ID='${{ secrets.KAKAO_CLIENT_ID }}' \
+              -e KAKAO_CLIENT_SECRET='${{ secrets.KAKAO_CLIENT_SECRET }}' \
               ${{ secrets.DOCKER_USERNAME }}/alphahows:v1
 
       - name: Notify Telegram (Success)
