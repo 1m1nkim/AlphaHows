@@ -39,8 +39,4 @@ public class User extends BaseTimeEntity {
     @Column(nullable = true)
     private String password; // 로컬 로그인을 위한 비밀번호 (소셜 로그인은 null)
 
-    // 유저의 스트릭 정보 (1:1 관계)
-    @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    private UserStreak userStreak;
-
 }
