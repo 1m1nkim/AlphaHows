@@ -1,15 +1,25 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import './LoginModal.css';
 
 interface LoginModalProps {
     isOpen: boolean;
     onClose: () => void;
+    onLoginStart: (message?: string) => void;
+    onLoginEnd: () => void;
+    onLoginSuccess: () => Promise<void> | void;
 }
 
-const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
+const LoginModal: React.FC<LoginModalProps> = ({
+    isOpen,
+    onClose,
+    onLoginStart,
+    onLoginEnd,
+    onLoginSuccess,
+}) => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     if (!isOpen) return null;
 
@@ -17,33 +27,39 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
         e.preventDefault();
         setError('');
 
+        setIsSubmitting(true);
+        onLoginStart('로그인 처리 중입니다.');
+
         try {
             const response = await fetch('/api/auth/login', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
+                credentials: 'same-origin',
                 body: JSON.stringify({ email, password }),
             });
 
             if (response.ok) {
-                const data = await response.text();
-                alert(data); // "Login Successful: ..."
+                await onLoginSuccess();
                 onClose();
-                // 여기에 로그인 성공 후 상태 업데이트 로직 추가 가능
-            } else {
-                const errData = await response.text();
-                setError(errData || 'Login failed');
+                return;
             }
+
+            const errData = await response.text();
+            setError(errData || '로그인에 실패했습니다.');
         } catch (err) {
-            setError('Network error occurring during login.');
+            setError('로그인 중 네트워크 오류가 발생했습니다.');
+        } finally {
+            setIsSubmitting(false);
+            onLoginEnd();
         }
     };
 
     return (
         <div className="login-modal-overlay">
             <div className="login-modal-content">
-                <button className="close-btn" onClick={onClose}>&times;</button>
+                <button className="close-btn" onClick={onClose} disabled={isSubmitting}>&times;</button>
                 <h2>Login</h2>
                 <form onSubmit={handleSubmit}>
                     <div className="form-group">
@@ -52,6 +68,7 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
                             type="email"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
+                            disabled={isSubmitting}
                         />
                     </div>
                     <div className="form-group">
@@ -60,13 +77,18 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
                             type="password"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
+                            disabled={isSubmitting}
                         />
                     </div>
                     {error && <p className="error-msg">{error}</p>}
-                    <button type="submit" className="login-submit-btn">Sign In</button>
+                    <button type="submit" className="login-submit-btn" disabled={isSubmitting}>Sign In</button>
 
                     <div className="divider">OR</div>
-                    <a href="/oauth2/authorization/kakao" className="kakao-login-btn">
+                    <a
+                        href="/oauth2/authorization/kakao"
+                        className="kakao-login-btn"
+                        onClick={() => onLoginStart('로그인 중입니다 잠시만 기다려주세요.')}
+                    >
                         카카오로 로그인
                     </a>
                 </form>

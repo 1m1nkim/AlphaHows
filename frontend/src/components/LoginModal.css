@@ -1,4 +1,4 @@
-.login-modal-overlay {
+﻿.login-modal-overlay {
     position: fixed;
     top: 0;
     left: 0;
@@ -32,6 +32,11 @@
     color: #333;
 }
 
+.close-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .form-group {
     margin-bottom: 1rem;
     display: flex;
@@ -50,6 +55,11 @@
     border-radius: 4px;
 }
 
+.form-group input:disabled {
+    background: #f8fafc;
+    cursor: not-allowed;
+}
+
 .login-submit-btn {
     width: 100%;
     padding: 0.75rem;
@@ -64,6 +74,11 @@
 
 .login-submit-btn:hover {
     background-color: #0056b3;
+}
+
+.login-submit-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 .error-msg {
@@ -107,7 +122,6 @@
     padding: 0.75rem;
     background-color: #FEE500;
     color: #3C1E1E;
-    /* Kakao Brown */
     border: none;
     border-radius: 4px;
     text-decoration: none;
