@@ -20,9 +20,11 @@ public record OfferResponse(
         BigDecimal salaryMax,
         String currency,
         String salaryUnit,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        boolean read,
+        boolean adminRead
 ) {
-    public static OfferResponse from(Offer offer) {
+    public static OfferResponse from(Offer offer, boolean read, boolean adminRead) {
         return new OfferResponse(
                 offer.getId(),
                 offer.getRecruiter().getEmail(),
@@ -38,7 +40,9 @@ public record OfferResponse(
                 offer.getSalaryMax(),
                 offer.getCurrency(),
                 offer.getSalaryUnit() == null ? null : offer.getSalaryUnit().name(),
-                offer.getCreatedAt()
+                offer.getCreatedAt(),
+                read,
+                adminRead
         );
     }
 }

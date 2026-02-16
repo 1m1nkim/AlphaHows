@@ -77,7 +77,23 @@ public class Offer extends BaseTimeEntity {
     @Column(name = "salary_unit", length = 10)
     private SalaryUnit salaryUnit;
 
+    @Builder.Default
+    @Column(name = "admin_read", nullable = false)
+    private boolean adminRead = false;
+
+    @Builder.Default
+    @Column(name = "recruiter_read", nullable = false)
+    private boolean recruiterRead = true;
+
     public void updateStatus(OfferStatus status) {
         this.status = status;
+    }
+
+    public void markReadByAdmin(boolean read) {
+        this.adminRead = read;
+    }
+
+    public void markReadByRecruiter(boolean read) {
+        this.recruiterRead = read;
     }
 }

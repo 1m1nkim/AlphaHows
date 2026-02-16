@@ -1,22 +1,25 @@
 package com.hows.alphahows.offer.service;
 
+import com.hows.alphahows.auth.util.AuthPrincipalUtils;
 import com.hows.alphahows.offer.dto.OfferCreateRequest;
+import com.hows.alphahows.offer.dto.OfferConfirmResponse;
+import com.hows.alphahows.offer.dto.OfferReadUpdateRequest;
 import com.hows.alphahows.offer.dto.OfferResponse;
 import com.hows.alphahows.offer.dto.OfferStatusUpdateRequest;
+import com.hows.alphahows.offer.dto.OfferUnreadCountResponse;
 import com.hows.alphahows.offer.entity.Offer;
 import com.hows.alphahows.offer.entity.OfferStatus;
 import com.hows.alphahows.offer.repository.OfferRepository;
 import com.hows.alphahows.user.entity.User;
 import com.hows.alphahows.user.repository.UserRepository;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.Locale;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
@@ -25,6 +28,7 @@ public class OfferService {
 
     private final OfferRepository offerRepository;
     private final UserRepository userRepository;
+    private final OfferNotificationService offerNotificationService;
 
     @Transactional
     public OfferResponse createOffer(OfferCreateRequest request, Authentication authentication) {
@@ -46,22 +50,33 @@ public class OfferService {
                 .currency(normalizeCurrency(request.currency()))
                 .salaryUnit(request.salaryUnit())
                 .build();
+        offer.markReadByAdmin(false);
+        offer.markReadByRecruiter(true);
 
-        return OfferResponse.from(offerRepository.save(offer));
+        Offer savedOffer = offerRepository.save(offer);
+        offerNotificationService.notifyAdminsOfferCreated(savedOffer);
+        return OfferResponse.from(savedOffer, isReadForUser(savedOffer, requester), savedOffer.isAdminRead());
     }
 
     @Transactional(readOnly = true)
-    public List<OfferResponse> getOffers(Authentication authentication) {
+    public List<OfferResponse> getOffers(
+            Authentication authentication,
+            OfferStatus status,
+            Boolean read,
+            String keyword
+    ) {
         User requester = resolveCurrentUser(authentication);
+        boolean admin = isAdmin(requester);
 
-        if (isAdmin(requester)) {
-            return offerRepository.findAllByOrderByIdDesc().stream()
-                    .map(OfferResponse::from)
-                    .toList();
-        }
+        List<Offer> offers = admin
+                ? offerRepository.findAllByOrderByIdDesc()
+                : offerRepository.findByRecruiterIdOrderByIdDesc(requester.getId());
 
-        return offerRepository.findByRecruiterIdOrderByIdDesc(requester.getId()).stream()
-                .map(OfferResponse::from)
+        return offers.stream()
+                .filter(offer -> status == null || offer.getStatus() == status)
+                .filter(offer -> read == null || isReadFilterMatched(offer, admin, read))
+                .filter(offer -> matchesKeyword(offer, keyword, admin))
+                .map(offer -> OfferResponse.from(offer, isReadForUser(offer, requester), offer.isAdminRead()))
                 .toList();
     }
 
@@ -70,7 +85,7 @@ public class OfferService {
         User requester = resolveCurrentUser(authentication);
 
         Offer offer = findReadableOffer(offerId, requester);
-        return OfferResponse.from(offer);
+        return OfferResponse.from(offer, isReadForUser(offer, requester), offer.isAdminRead());
     }
 
     @Transactional
@@ -80,8 +95,72 @@ public class OfferService {
 
         validateStatusTransition(offer.getStatus(), request.status());
         offer.updateStatus(request.status());
+        if (isAdmin(requester)) {
+            offer.markReadByAdmin(true);
+            offer.markReadByRecruiter(false);
+            offerNotificationService.notifyRecruiterStatusChanged(offer);
+        }
 
-        return OfferResponse.from(offer);
+        return OfferResponse.from(offer, isReadForUser(offer, requester), offer.isAdminRead());
+    }
+
+    @Transactional
+    public OfferResponse updateRead(Long offerId, OfferReadUpdateRequest request, Authentication authentication) {
+        User requester = resolveCurrentUser(authentication);
+        Offer offer = findReadableOffer(offerId, requester);
+
+        if (!isAdmin(requester)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only admin can update read state");
+        }
+
+        boolean before = offer.isAdminRead();
+        boolean after = Boolean.TRUE.equals(request.read());
+        offer.markReadByAdmin(after);
+
+        if (!before && after) {
+            offer.markReadByRecruiter(false);
+            offerNotificationService.notifyRecruiterOfferRead(offer);
+        }
+
+        return OfferResponse.from(offer, isReadForUser(offer, requester), offer.isAdminRead());
+    }
+
+    @Transactional(readOnly = true)
+    public OfferUnreadCountResponse getUnreadCount(Authentication authentication) {
+        User requester = resolveCurrentUser(authentication);
+        long unreadCount = isAdmin(requester)
+                ? offerRepository.countByAdminReadFalse()
+                : offerRepository.countByRecruiterIdAndRecruiterReadFalse(requester.getId());
+        return new OfferUnreadCountResponse(unreadCount);
+    }
+
+    @Transactional
+    public OfferConfirmResponse confirmUnreadForUser(Authentication authentication) {
+        User requester = resolveCurrentUser(authentication);
+        if (isAdmin(requester)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Admin does not use confirmUnreadForUser");
+        }
+
+        List<Offer> unreadOffers = offerRepository.findByRecruiterIdAndRecruiterReadFalseOrderByIdDesc(requester.getId());
+        for (Offer offer : unreadOffers) {
+            offer.markReadByRecruiter(true);
+        }
+
+        return new OfferConfirmResponse(unreadOffers.size());
+    }
+
+    @Transactional
+    public OfferResponse confirmOfferForUser(Long offerId, Authentication authentication) {
+        User requester = resolveCurrentUser(authentication);
+        if (isAdmin(requester)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Admin does not use confirmOfferForUser");
+        }
+
+        Offer offer = offerRepository.findByIdAndRecruiterId(offerId, requester.getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Offer not found"));
+
+        offer.markReadByRecruiter(true);
+        return OfferResponse.from(offer, isReadForUser(offer, requester), offer.isAdminRead());
     }
 
     private Offer findReadableOffer(Long offerId, User requester) {
@@ -132,14 +211,7 @@ public class OfferService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
         }
 
-        Object principal = authentication.getPrincipal();
-        String email = null;
-
-        if (principal instanceof String username) {
-            email = username;
-        } else if (principal instanceof OAuth2User oauth2User) {
-            email = extractKakaoEmail(oauth2User);
-        }
+        String email = AuthPrincipalUtils.resolveEmail(authentication);
 
         if (email == null || email.isBlank()) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Cannot resolve current user");
@@ -149,23 +221,29 @@ public class OfferService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
     }
 
-    @SuppressWarnings("unchecked")
-    private String extractKakaoEmail(OAuth2User oauth2User) {
-        Object kakaoAccountObj = oauth2User.getAttributes().get("kakao_account");
-        if (kakaoAccountObj instanceof Map<?, ?> kakaoAccount) {
-            Object emailObj = kakaoAccount.get("email");
-            if (emailObj != null) {
-                return emailObj.toString();
-            }
-        }
+    private boolean isReadForUser(Offer offer, User requester) {
+        return isAdmin(requester) ? offer.isAdminRead() : offer.isRecruiterRead();
+    }
 
-        Object idObj = oauth2User.getAttributes().get("id");
-        if (idObj != null) {
-            return idObj + "@kakao.com";
+    private boolean isReadFilterMatched(Offer offer, boolean admin, boolean read) {
+        if (admin) {
+            return offer.isAdminRead() == read;
         }
+        return offer.isAdminRead() == read;
+    }
 
-        return Optional.ofNullable(oauth2User.getName())
-                .map(name -> name + "@kakao.com")
-                .orElse(null);
+    private boolean matchesKeyword(Offer offer, String keyword, boolean admin) {
+        if (!StringUtils.hasText(keyword)) {
+            return true;
+        }
+        String query = keyword.trim().toLowerCase(Locale.ROOT);
+        return contains(offer.getCompanyName(), query)
+                || contains(offer.getPositionTitle(), query)
+                || contains(offer.getMessage(), query)
+                || (admin && contains(offer.getRecruiter().getEmail(), query));
+    }
+
+    private boolean contains(String source, String keyword) {
+        return source != null && source.toLowerCase(Locale.ROOT).contains(keyword);
     }
 }

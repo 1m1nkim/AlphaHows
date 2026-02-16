@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { Client } from '@stomp/stompjs';
+import SockJS from 'sockjs-client';
 import './Main.css';
 import LoginModal from '../../components/LoginModal';
 
 type AuthState = {
   authenticated: boolean;
   nickname: string;
+  email: string;
   role: string;
 };
 
@@ -22,6 +25,8 @@ type OfferItem = {
   status: string;
   salaryMin: number | null;
   createdAt: string | null;
+  read: boolean;
+  adminRead: boolean;
 };
 
 type OfferFormState = {
@@ -36,6 +41,7 @@ type OfferFormState = {
 };
 
 type OfferPanel = 'create' | 'list' | null;
+type ReadFilter = 'ALL' | 'READ' | 'UNREAD';
 
 const INITIAL_OFFER_FORM: OfferFormState = {
   companyName: '',
@@ -98,20 +104,29 @@ const formatCreatedAt = (value: string | null) => {
   return value.replace('T', ' ').slice(0, 16);
 };
 
+const toTopicKey = (email: string) => email.toLowerCase().replace(/[^a-z0-9]/g, '_');
+
 const Main = () => {
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-  const [auth, setAuth] = useState<AuthState>({ authenticated: false, nickname: '', role: 'USER' });
+  const [auth, setAuth] = useState<AuthState>({ authenticated: false, nickname: '', email: '', role: 'USER' });
   const [activePanel, setActivePanel] = useState<OfferPanel>(null);
   const [offers, setOffers] = useState<OfferItem[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [offerForm, setOfferForm] = useState<OfferFormState>(INITIAL_OFFER_FORM);
   const [isOfferLoading, setIsOfferLoading] = useState(false);
   const [isOfferSubmitting, setIsOfferSubmitting] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('처리 중입니다...');
   const [noticeMessage, setNoticeMessage] = useState('');
-  const noticeTimerRef = useRef<number | null>(null);
+  const [keywordFilter, setKeywordFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | string>('ALL');
+  const [readFilter, setReadFilter] = useState<ReadFilter>('ALL');
 
-  const isAdmin = useMemo(() => auth.role === 'ADMIN', [auth.role]);
+  const noticeTimerRef = useRef<number | null>(null);
+  const stompClientRef = useRef<Client | null>(null);
+  const previousAdminReadByOfferRef = useRef<Record<number, boolean>>({});
+
+  const isAdmin = useMemo(() => auth.role.trim().toUpperCase() === 'ADMIN', [auth.role]);
 
   const showNotice = useCallback((message: string) => {
     setNoticeMessage(message);
@@ -119,54 +134,189 @@ const Main = () => {
     noticeTimerRef.current = window.setTimeout(() => setNoticeMessage(''), 2200);
   }, []);
 
+  const syncAdminReadTransitionNotice = useCallback((list: OfferItem[]) => {
+    if (isAdmin) return;
+
+    const prevMap = previousAdminReadByOfferRef.current;
+    const hasPrevSnapshot = Object.keys(prevMap).length > 0;
+    const nextMap: Record<number, boolean> = {};
+    let hasNewlyRead = false;
+
+    for (const offer of list) {
+      nextMap[offer.offerId] = offer.adminRead;
+      if (hasPrevSnapshot && prevMap[offer.offerId] === false && offer.adminRead === true) {
+        hasNewlyRead = true;
+      }
+    }
+
+    previousAdminReadByOfferRef.current = nextMap;
+    if (hasNewlyRead) {
+      showNotice('관리자가 오퍼를 확인했습니다.');
+    }
+  }, [isAdmin, showNotice]);
+
+  const fetchUnreadCount = useCallback(async () => {
+    if (!auth.authenticated) {
+      setUnreadCount(0);
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/offers/unread-count', { method: 'GET', credentials: 'same-origin' });
+      if (!response.ok) return;
+      const data: { count: number } = await response.json();
+      setUnreadCount(data.count ?? 0);
+    } catch {
+      // ignore
+    }
+  }, [auth.authenticated]);
+
   const refreshAuth = useCallback(async () => {
     try {
       const response = await fetch('/api/auth/me', { method: 'GET', credentials: 'same-origin' });
       if (!response.ok) {
-        setAuth({ authenticated: false, nickname: '', role: 'USER' });
+        setAuth({ authenticated: false, nickname: '', email: '', role: 'USER' });
         return;
       }
+
       const data = await response.json();
       if (data?.authenticated) {
-        setAuth({ authenticated: true, nickname: data.nickname || 'User', role: data.role || 'USER' });
+        setAuth({
+          authenticated: true,
+          nickname: data.nickname || 'User',
+          email: data.email || '',
+          role: String(data.role || 'USER').trim().toUpperCase(),
+        });
       } else {
-        setAuth({ authenticated: false, nickname: '', role: 'USER' });
+        setAuth({ authenticated: false, nickname: '', email: '', role: 'USER' });
       }
     } catch {
-      setAuth({ authenticated: false, nickname: '', role: 'USER' });
+      setAuth({ authenticated: false, nickname: '', email: '', role: 'USER' });
     }
   }, []);
 
   const fetchOffers = useCallback(async () => {
     if (!auth.authenticated) return;
+
     setIsOfferLoading(true);
     try {
-      const response = await fetch('/api/offers', { method: 'GET', credentials: 'same-origin' });
+      const params = new URLSearchParams();
+      if (statusFilter !== 'ALL') params.set('status', statusFilter);
+      if (readFilter === 'READ') params.set('read', 'true');
+      if (readFilter === 'UNREAD') params.set('read', 'false');
+      if (keywordFilter.trim()) params.set('keyword', keywordFilter.trim());
+
+      const query = params.toString();
+      const response = await fetch(`/api/offers${query ? `?${query}` : ''}`, {
+        method: 'GET',
+        credentials: 'same-origin',
+      });
+
       if (!response.ok) throw new Error('Offer load failed');
       const data: OfferItem[] = await response.json();
       setOffers(data);
+      syncAdminReadTransitionNotice(data);
+      await fetchUnreadCount();
     } catch {
       showNotice('오퍼 목록 조회에 실패했습니다.');
     } finally {
       setIsOfferLoading(false);
     }
-  }, [auth.authenticated, showNotice]);
+  }, [auth.authenticated, fetchUnreadCount, keywordFilter, readFilter, showNotice, statusFilter, syncAdminReadTransitionNotice]);
 
   useEffect(() => {
-    refreshAuth();
+    void refreshAuth();
   }, [refreshAuth]);
 
   useEffect(() => {
+    if (auth.authenticated) {
+      void fetchUnreadCount();
+    }
+  }, [auth.authenticated, fetchUnreadCount]);
+
+  useEffect(() => {
     if (activePanel === 'list') {
-      fetchOffers();
+      void fetchOffers();
     }
   }, [activePanel, fetchOffers]);
 
   useEffect(() => {
+    if (!auth.authenticated || isAdmin) {
+      previousAdminReadByOfferRef.current = {};
+    }
+  }, [auth.authenticated, isAdmin]);
+
+  useEffect(() => {
+    if (!auth.authenticated || isAdmin) {
+      return;
+    }
+
+    const timerId = window.setInterval(async () => {
+      try {
+        const response = await fetch('/api/offers', { method: 'GET', credentials: 'same-origin' });
+        if (!response.ok) return;
+        const data: OfferItem[] = await response.json();
+        syncAdminReadTransitionNotice(data);
+        await fetchUnreadCount();
+      } catch {
+        // ignore
+      }
+    }, 7000);
+
+    return () => window.clearInterval(timerId);
+  }, [auth.authenticated, isAdmin, syncAdminReadTransitionNotice, fetchUnreadCount]);
+
+  useEffect(() => {
     return () => {
       if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+      if (stompClientRef.current?.active) {
+        void stompClientRef.current.deactivate();
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (!auth.authenticated) {
+      if (stompClientRef.current?.active) {
+        void stompClientRef.current.deactivate();
+      }
+      stompClientRef.current = null;
+      return;
+    }
+
+    const client = new Client({
+      webSocketFactory: () => new SockJS('/ws'),
+      reconnectDelay: 3000,
+      onConnect: () => {
+        const handleNotification = (frame: { body: string }) => {
+          try {
+            const payload = JSON.parse(frame.body) as { title?: string; message?: string };
+            showNotice(payload.title || payload.message || '새 알림이 도착했습니다.');
+          } catch {
+            showNotice('새 알림이 도착했습니다.');
+          }
+          void fetchUnreadCount();
+          if (activePanel === 'list') {
+            void fetchOffers();
+          }
+        };
+
+        client.subscribe('/user/queue/notifications', handleNotification);
+        if (auth.email) {
+          client.subscribe(`/topic/notifications/${toTopicKey(auth.email)}`, handleNotification);
+        }
+      },
+    });
+
+    client.activate();
+    stompClientRef.current = client;
+
+    return () => {
+      if (client.active) {
+        void client.deactivate();
+      }
+    };
+  }, [activePanel, auth.authenticated, auth.email, fetchOffers, fetchUnreadCount, showNotice]);
 
   const openPanel = (panel: OfferPanel) => {
     if (!auth.authenticated) {
@@ -194,6 +344,8 @@ const Main = () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
       await refreshAuth();
+      setOffers([]);
+      setUnreadCount(0);
       setActivePanel(null);
       showNotice('로그아웃 되었습니다.');
     } finally {
@@ -246,6 +398,7 @@ const Main = () => {
       setOfferForm(INITIAL_OFFER_FORM);
       setActivePanel(null);
       showNotice('오퍼가 등록되었습니다.');
+      await fetchUnreadCount();
     } catch {
       showNotice('오퍼 등록에 실패했습니다.');
     } finally {
@@ -253,6 +406,63 @@ const Main = () => {
       setIsLoading(false);
     }
   };
+
+  const handleReadToggleByAdmin = async (offer: OfferItem) => {
+    if (!isAdmin) return;
+
+    setLoadingMessage(offer.read ? '안읽음으로 변경 중입니다...' : '읽음으로 변경 중입니다...');
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/offers/${offer.offerId}/read`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ read: !offer.read }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(errText || 'Offer read update failed');
+      }
+
+      await fetchOffers();
+      await fetchUnreadCount();
+      showNotice('읽음 상태가 변경되었습니다.');
+    } catch {
+      showNotice('읽음 상태 변경에 실패했습니다.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleConfirmByUser = async (offerId: number) => {
+    if (isAdmin) return;
+
+    setLoadingMessage('확인 처리 중입니다...');
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/offers/${offerId}/confirm`, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(errText || 'Offer confirm failed');
+      }
+
+      await fetchUnreadCount();
+      await fetchOffers();
+      showNotice('확인되었습니다.');
+    } catch {
+      showNotice('확인 처리에 실패했습니다.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const getDisplayRead = (offer: OfferItem) => (isAdmin ? offer.read : offer.adminRead);
+  const offerMenuLabel = unreadCount > 0 ? `오퍼관리(${unreadCount})` : '오퍼관리';
 
   return (
     <div className="main-container">
@@ -284,11 +494,11 @@ const Main = () => {
           <button className="nav-btn">홈</button>
           <button className="nav-btn">소개</button>
           {!isAdmin && <button className="nav-btn" onClick={() => openPanel('create')}>오퍼 등록</button>}
-          <button className="nav-btn" onClick={() => openPanel('list')}>{isAdmin ? '오퍼 관리' : '오퍼 목록'}</button>
+          <button className="nav-btn" onClick={() => openPanel('list')}>{offerMenuLabel}</button>
 
           {auth.authenticated ? (
             <>
-              <span className="nav-user">{auth.nickname}님</span>
+              <span className="nav-user">{auth.nickname}님 ({auth.role})</span>
               <button className="nav-btn primary" onClick={handleLogout}>로그아웃</button>
             </>
           ) : (
@@ -319,22 +529,71 @@ const Main = () => {
 
         {activePanel === 'list' && (
           <div className="offer-pane">
-            <div className="offer-pane-header"><h3>{isAdmin ? '오퍼 관리' : '오퍼 목록'}</h3><button onClick={closePanel}>닫기</button></div>
+            <div className="offer-pane-header"><h3>{offerMenuLabel}</h3><button onClick={closePanel}>닫기</button></div>
+            <div className="offer-filter-row">
+              <input
+                type="text"
+                value={keywordFilter}
+                onChange={(e) => setKeywordFilter(e.target.value)}
+                placeholder="회사명/포지션/메시지 검색"
+              />
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                <option value="ALL">전체 상태</option>
+                {STATUS_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
+              <select value={readFilter} onChange={(e) => setReadFilter(e.target.value as ReadFilter)}>
+                <option value="ALL">확인 상태 전체</option>
+                <option value="UNREAD">미확인</option>
+                <option value="READ">확인됨</option>
+              </select>
+              <button
+                className="secondary"
+                onClick={() => {
+                  setKeywordFilter('');
+                  setStatusFilter('ALL');
+                  setReadFilter('ALL');
+                }}
+              >
+                초기화
+              </button>
+            </div>
+
             <div className="offer-list-wrap">
               {isOfferLoading && <p className="empty">목록을 불러오는 중입니다...</p>}
               {!isOfferLoading && offers.length === 0 && <p className="empty">등록된 오퍼가 없습니다.</p>}
-              {offers.map((offer) => (
-                <article key={offer.offerId} className="offer-item">
-                  <div className="head"><strong>{offer.companyName}</strong><span>{offer.positionTitle}</span></div>
-                  {isAdmin && <div className="meta">요청자: {offer.recruiterEmail}</div>}
-                  <div className="meta">상태: {toKoreanLabel('status', offer.status)}</div>
-                  <div className="meta">고용형태: {toKoreanLabel('employment', offer.employmentType)}</div>
-                  <div className="meta">근무형태: {toKoreanLabel('workType', offer.workType)}</div>
-                  <div className="meta">희망연봉: {offer.salaryMin == null ? '협의' : `${Number(offer.salaryMin).toLocaleString('ko-KR')}원`}</div>
-                  <div className="meta">등록시간: {formatCreatedAt(offer.createdAt)}</div>
-                  <p>{offer.message || '메시지 없음'}</p>
-                </article>
-              ))}
+
+              {offers.map((offer) => {
+                const displayRead = getDisplayRead(offer);
+                return (
+                  <article key={offer.offerId} className={`offer-item ${displayRead ? '' : 'unread'}`}>
+                    <div className="head"><strong>{offer.companyName}</strong><span>{offer.positionTitle}</span></div>
+                    <div className="read-chip">
+                      {isAdmin
+                        ? (displayRead ? '읽음' : '안읽음')
+                        : (displayRead ? '관리자 확인됨' : '관리자 미확인')}
+                    </div>
+                    {isAdmin && <div className="meta">요청자: {offer.recruiterEmail}</div>}
+                    <div className="meta">상태: {toKoreanLabel('status', offer.status)}</div>
+                    <div className="meta">고용형태: {toKoreanLabel('employment', offer.employmentType)}</div>
+                    <div className="meta">근무형태: {toKoreanLabel('workType', offer.workType)}</div>
+                    <div className="meta">희망연봉: {offer.salaryMin == null ? '협의' : `${Number(offer.salaryMin).toLocaleString('ko-KR')}원`}</div>
+                    <div className="meta">등록시간: {formatCreatedAt(offer.createdAt)}</div>
+                    <p>{offer.message || '메시지 없음'}</p>
+
+                    {isAdmin && (
+                      <div className="status-row">
+                        <button onClick={() => handleReadToggleByAdmin(offer)}>{displayRead ? '안읽음으로' : '읽음으로'}</button>
+                      </div>
+                    )}
+
+                    {!isAdmin && !offer.read && (
+                      <div className="status-row">
+                        <button className="secondary" onClick={() => handleConfirmByUser(offer.offerId)}>확인</button>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
             </div>
           </div>
         )}
@@ -357,7 +616,7 @@ const Main = () => {
           </div>
           <div className="cta-group">
             {!isAdmin && <button className="cta-btn primary" onClick={() => openPanel('create')}>오퍼 작성</button>}
-            <button className="cta-btn secondary" onClick={() => openPanel('list')}>{isAdmin ? '오퍼 관리' : '오퍼 보기'}</button>
+            <button className="cta-btn secondary" onClick={() => openPanel('list')}>{offerMenuLabel}</button>
           </div>
         </div>
 

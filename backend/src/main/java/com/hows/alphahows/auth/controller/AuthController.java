@@ -2,10 +2,12 @@ package com.hows.alphahows.auth.controller;
 
 import com.hows.alphahows.auth.dto.LoginRequest;
 import com.hows.alphahows.auth.service.AuthService;
+import com.hows.alphahows.auth.util.AuthPrincipalUtils;
 import com.hows.alphahows.user.entity.User;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -15,7 +17,6 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -64,43 +65,14 @@ public class AuthController {
 
         Object principal = authentication.getPrincipal();
         String nickname = null;
-        String email = null;
-        String role = "USER";
+        String email = AuthPrincipalUtils.resolveEmail(authentication);
+        User user = email == null ? null : authService.findByEmail(email).orElse(null);
+        String role = user == null ? "USER" : normalizeRole(user.getRole());
 
-        if (principal instanceof OAuth2User oauth2User) {
-            Object kakaoAccountObj = oauth2User.getAttributes().get("kakao_account");
-            if (kakaoAccountObj instanceof Map<?, ?> kakaoAccount) {
-                Object profileObj = kakaoAccount.get("profile");
-                if (profileObj instanceof Map<?, ?> profile) {
-                    Object nickObj = profile.get("nickname");
-                    if (nickObj != null) {
-                        nickname = nickObj.toString();
-                    }
-                }
-                Object emailObj = kakaoAccount.get("email");
-                if (emailObj != null) {
-                    email = emailObj.toString();
-                }
-            }
-
-            if (nickname == null) {
-                nickname = oauth2User.getName();
-            }
-
-            if (email != null) {
-                role = authService.findByEmail(email)
-                        .map(User::getRole)
-                        .orElse("USER");
-            }
+        if (user != null && user.getNickname() != null && !user.getNickname().isBlank()) {
+            nickname = user.getNickname();
         } else if (principal instanceof String username) {
-            email = username;
-            User user = authService.findByEmail(username).orElse(null);
-            if (user != null) {
-                nickname = user.getNickname();
-                role = user.getRole();
-            } else {
-                nickname = username;
-            }
+            nickname = username;
         } else if (principal != null) {
             nickname = principal.toString();
         }
@@ -109,7 +81,7 @@ public class AuthController {
                 "authenticated", true,
                 "nickname", nickname == null ? "User" : nickname,
                 "email", email == null ? "" : email,
-                "role", role
+                "role", normalizeRole(role)
         ));
     }
 
@@ -121,5 +93,12 @@ public class AuthController {
         }
         SecurityContextHolder.clearContext();
         return ResponseEntity.ok(Map.of("authenticated", false));
+    }
+
+    private String normalizeRole(String role) {
+        if (role == null || role.isBlank()) {
+            return "USER";
+        }
+        return role.trim().toUpperCase(Locale.ROOT);
     }
 }

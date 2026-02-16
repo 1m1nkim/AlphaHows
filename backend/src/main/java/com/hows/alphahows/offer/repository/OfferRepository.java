@@ -11,4 +11,10 @@ public interface OfferRepository extends JpaRepository<Offer, Long> {
     Optional<Offer> findByIdAndRecruiterId(Long id, Long recruiterId);
 
     List<Offer> findAllByOrderByIdDesc();
+
+    long countByAdminReadFalse();
+
+    long countByRecruiterIdAndRecruiterReadFalse(Long recruiterId);
+
+    List<Offer> findByRecruiterIdAndRecruiterReadFalseOrderByIdDesc(Long recruiterId);
 }
