@@ -43,6 +43,12 @@ public class Offer extends BaseTimeEntity {
     @Column(name = "position_title", nullable = false, length = 255)
     private String positionTitle;
 
+    @Column(name = "contact_email", length = 255)
+    private String contactEmail;
+
+    @Column(name = "contact_phone", length = 50)
+    private String contactPhone;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "employment_type", nullable = false, length = 20)
     private EmploymentType employmentType;
@@ -70,4 +76,8 @@ public class Offer extends BaseTimeEntity {
     @Enumerated(EnumType.STRING)
     @Column(name = "salary_unit", length = 10)
     private SalaryUnit salaryUnit;
+
+    public void updateStatus(OfferStatus status) {
+        this.status = status;
+    }
 }
